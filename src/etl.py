@@ -14,7 +14,9 @@ RAW_PATH = "data/raw/pm25_sensor_5049_page_1.json"
 OUTPUT_PATH = "data/processed/pm25_clean"
 
 # 3. Đọc JSON
-df_raw = spark.read.json(RAW_PATH)
+df_raw = spark.read \
+    .option("multiLine", True) \
+    .json(RAW_PATH)
 
 # 4. Flatten dữ liệu (results là array)
 df = df_raw.selectExpr("explode(results) as r")
