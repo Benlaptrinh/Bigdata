@@ -4,6 +4,9 @@ from pyspark.sql.functions import col, to_date
 # 1. Khởi tạo Spark
 spark = SparkSession.builder \
     .appName("PM25_ETL") \
+    .master("local[*]") \
+    .config("spark.driver.host", "127.0.0.1") \
+    .config("spark.driver.bindAddress", "127.0.0.1") \
     .getOrCreate()
 
 # 2. Đường dẫn dữ liệu
