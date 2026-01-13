@@ -1,5 +1,20 @@
+# Environment
 .env
 venv/
-data/
+
+# Python cache
 __pycache__/
 .ipynb_checkpoints/
+
+# Data (Big Data output & raw)
+data/raw/
+data/processed/
+
+# Spark / Hadoop temp
+*.parquet
+*.snappy.parquet
+*.crc
+_SUCCESS
+
+# OS
+.DS_Store
