@@ -7,9 +7,9 @@ from pyspark.sql.window import Window
 # -----------------------
 spark = SparkSession.builder \
     .appName("PM25 Feature Engineering") \
-    .master("local[2]") \
+    .master("local[*]") \
+    .config("spark.driver.host", "127.0.0.1") \
     .config("spark.driver.bindAddress", "127.0.0.1") \
-    .config("spark.sql.shuffle.partitions", "2") \
     .getOrCreate()
 
 spark.sparkContext.setLogLevel("WARN")

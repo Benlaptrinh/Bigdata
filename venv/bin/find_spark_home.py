@@ -1,4 +1,4 @@
-#!/home/parallels/aqi-bigdata/venv/bin/python3
+#!/home/parallels/aqi-bigdata/venv/bin/python3.10
 
 #
 # Licensed to the Apache Software Foundation (ASF) under one or more
