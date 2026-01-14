@@ -9,6 +9,7 @@ from pyspark.ml.evaluation import RegressionEvaluator
 spark = SparkSession.builder \
     .appName("PM25 Training Model") \
     .master("local[*]") \
+    .config("spark.driver.bindAddress", "127.0.0.1") \
     .getOrCreate()
 
 spark.sparkContext.setLogLevel("WARN")

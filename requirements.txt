@@ -1,1 +1,5 @@
-pip install -r requirements.txt
+pyspark==3.5.0
+requests
+python-dotenv
+numpy
+pandas
