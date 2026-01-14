@@ -10,7 +10,7 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 # 2. Đường dẫn dữ liệu
-RAW_PATH = "data/raw/pm25_sensor_5049_page_1.json"
+RAW_PATH = "data/raw/hourly/*.json"
 OUTPUT_PATH = "data/processed/pm25_clean"
 
 # 3. Đọc JSON
@@ -45,7 +45,7 @@ df_final = df_clean.withColumn(
 )
 
 # 8. Ghi ra Parquet
-df_final.write.mode("overwrite").parquet(OUTPUT_PATH)
+df_final.write.mode("append").parquet(OUTPUT_PATH)
 
 print("ETL DONE. Output saved to:", OUTPUT_PATH)
 
