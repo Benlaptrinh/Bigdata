@@ -1,0 +1,58 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.env
+.venv
+venv/
+ENV/
+env/
+
+# =========================
+# Jupyter Notebook
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Spark / Big Data outputs
+# =========================
+data/raw/
+data/processed/
+data/predictions/
+
+# Spark metadata & temp files
+_SUCCESS
+_SUCCESS.crc
+*.crc
+*.snappy.parquet
+part-00000*
+spark-warehouse/
+metastore_db/
+
+# =========================
+# Trained models (ML output)
+# =========================
+models/
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# =========================
+# Build / cache
+# =========================
+dist/
+build/
+*.egg-info/
