@@ -84,18 +84,24 @@ def fetch_all_pages(sensor_id, datetime_from=None, datetime_to=None):
     return combined_data
 
 if __name__ == "__main__":
-    # Fetch data from 2024-01-01 to now (latest data)
-    datetime_from = datetime(2024, 1, 1)
-    datetime_to = datetime.utcnow()
+    # Default: fetch all available data (no date filter)
+    # Set DATETIME_FROM/DATETIME_TO env vars to filter by date range
+    datetime_from_str = os.getenv("DATETIME_FROM", "")
+    datetime_to_str = os.getenv("DATETIME_TO", "")
+
+    datetime_from = datetime.strptime(datetime_from_str, "%Y-%m-%d") if datetime_from_str else None
+    datetime_to = datetime.strptime(datetime_to_str, "%Y-%m-%d") if datetime_to_str else None
+
+    date_range_str = f"{datetime_from.date() if datetime_from else 'beginning'} to {datetime_to.date() if datetime_to else 'now'}"
 
     print(f"Fetching PM2.5 data for sensor {SENSOR_ID}")
-    print(f"Date range: {datetime_from.date()} to {datetime_to.date()}")
+    print(f"Date range: {date_range_str}")
     print("-" * 50)
 
     data = fetch_all_pages(SENSOR_ID, datetime_from=datetime_from, datetime_to=datetime_to)
 
     if data.get("results"):
-        save_raw(data, SENSOR_ID, "latest")
+        save_raw(data, SENSOR_ID, "all")
         print(f"\nTotal records fetched: {len(data['results'])}")
     else:
         print("No data found for the specified date range")
