@@ -6,7 +6,7 @@ spark = SparkSession.builder \
     .appName("PM25_ETL") \
     .master("local[*]") \
     .config("spark.driver.host", "127.0.0.1") \
-    .config("spark.driver.FbindAddress", "127.0.0.1") \
+    .config("spark.driver.bindAddress", "127.0.0.1") \
     .getOrCreate()
 
 # 2. Đường dẫn dữ liệu
