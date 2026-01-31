@@ -1,7 +1,14 @@
+"""
+Ingest PM2.5 data from OpenAQ API
+- Supports multiple sensors
+- Fetches hourly data (more rows than daily)
+- Saves raw JSON files per sensor
+"""
 import requests
 import os
 import json
-from datetime import datetime, timedelta
+import time
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,91 +24,156 @@ HEADERS = {
     "X-API-Key": API_KEY
 }
 
-SENSOR_ID = int(os.getenv("SENSOR_ID", "5049"))
+# Get sensor IDs (support multiple)
+SENSOR_IDS_STR = os.getenv("SENSOR_IDS", "")
+SENSOR_IDS = [s.strip() for s in SENSOR_IDS_STR.split(",") if s.strip()]
+
+if not SENSOR_IDS:
+    # Fallback to single sensor
+    SENSOR_IDS = [int(os.getenv("SENSOR_ID", "5049"))]
+
 LIMIT = int(os.getenv("LIMIT", "100"))
 
+# Date range
+DATE_FROM = os.getenv("DATE_FROM", "")  # Format: 2024-01-01
+DATE_TO = os.getenv("DATE_TO", "")      # Format: 2025-01-01
+
+
 def to_utc_iso(dt):
-    """Convert datetime to UTC ISO format for API"""
+    """Convert datetime to UTC ISO format"""
+    if isinstance(dt, str):
+        return dt if dt.endswith('Z') else dt + 'Z'
     return dt.replace(microsecond=0).isoformat() + "Z"
 
-def fetch_daily_measurements(sensor_id, datetime_from=None, datetime_to=None, limit=100, page=1):
-    url = f"{BASE_URL}/sensors/{sensor_id}/measurements/daily"
+
+def fetch_measurements(sensor_id, interval="hourly", page=1, limit=100):
+    """
+    Fetch measurements from OpenAQ API
+    
+    Args:
+        sensor_id: OpenAQ sensor ID
+        interval: 'hourly' or 'daily'
+        page: Page number
+        limit: Records per page (max 100)
+    
+    Returns:
+        dict: API response
+    """
+    url = f"{BASE_URL}/sensors/{sensor_id}/measurements/{interval}"
+    
     params = {
         "limit": limit,
         "page": page
     }
-    if datetime_from:
-        params["datetime_from"] = to_utc_iso(datetime_from)
-    if datetime_to:
-        params["datetime_to"] = to_utc_iso(datetime_to)
-
-    response = requests.get(url, headers=HEADERS, params=params)
+    
+    if DATE_FROM:
+        params["datetime_from"] = to_utc_iso(DATE_FROM)
+    if DATE_TO:
+        params["datetime_to"] = to_utc_iso(DATE_TO)
+    
+    response = requests.get(url, headers=HEADERS, params=params, timeout=60)
     response.raise_for_status()
     return response.json()
 
-def save_raw(data, sensor_id, suffix=""):
-    os.makedirs("data/raw", exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = f"data/raw/pm25_sensor_{sensor_id}_{suffix}_{timestamp}.json"
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-    print(f"Saved {path}")
-    return path
 
-def fetch_all_pages(sensor_id, datetime_from=None, datetime_to=None):
-    """Fetch all available pages"""
+def fetch_all_for_sensor(sensor_id, interval="hourly"):
+    """
+    Fetch all measurements for a single sensor
+    """
     all_results = []
     page = 1
-
+    
+    print(f"\n📡 Fetching sensor {sensor_id} ({interval})...")
+    
     while True:
-        print(f"Fetching page {page}...")
-        data = fetch_daily_measurements(
-            sensor_id,
-            datetime_from=datetime_from,
-            datetime_to=datetime_to,
-            limit=LIMIT,
-            page=page
-        )
+        try:
+            data = fetch_measurements(sensor_id, interval=interval, page=page, limit=LIMIT)
+            
+            results = data.get("results", [])
+            
+            if not results:
+                break
+            
+            all_results.extend(results)
+            
+            meta = data.get("meta", {})
+            found = meta.get("found", 0)
+            page_limit = meta.get("limit", 100)
+            
+            print(f"   Page {page}: got {len(results)} records (total: {found})")
+            
+            # Stop if we've got all pages
+            if len(results) < page_limit:
+                break
+            
+            page += 1
+            time.sleep(0.3)  # Rate limiting
+            
+        except Exception as e:
+            print(f"   ❌ Error on page {page}: {e}")
+            break
+    
+    return all_results
 
-        results = data.get("results", [])
-        all_results.extend(results)
 
-        meta = data.get("meta", {})
-        found = meta.get("found", 0)
-        limit = meta.get("limit", 100)
+def save_sensor_data(data, sensor_id, interval):
+    """
+    Save sensor data to JSON file
+    """
+    os.makedirs("data/raw", exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    filename = f"data/raw/sensor_{sensor_id}_{interval}_{timestamp}.json"
+    
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump({
+            "sensor_id": sensor_id,
+            "interval": interval,
+            "date_from": DATE_FROM,
+            "date_to": DATE_TO,
+            "count": len(data),
+            "results": data
+        }, f, indent=2, ensure_ascii=False)
+    
+    print(f"   ✅ Saved {len(data)} records to {filename}")
+    return filename
 
-        print(f"  -> Got {len(results)} records (total: {found})")
 
-        if len(results) < limit:
-            break  # No more pages
-        page += 1
+def main():
+    """
+    Main function to ingest data from multiple sensors
+    """
+    print("=" * 60)
+    print("🚀 OpenAQ Multi-Sensor Ingest")
+    print("=" * 60)
+    print(f"Sensors: {SENSOR_IDS}")
+    print(f"Date range: {DATE_FROM or 'beginning'} to {DATE_TO or 'now'}")
+    print(f"Interval: hourly (to maximize rows)")
+    print("=" * 60)
+    
+    total_records = 0
+    files_created = []
+    
+    for sensor_id in SENSOR_IDS:
+        # Fetch hourly data (more rows than daily!)
+        results = fetch_all_for_sensor(sensor_id, interval="hourly")
+        
+        if results:
+            filename = save_sensor_data(results, sensor_id, "hourly")
+            files_created.append(filename)
+            total_records += len(results)
+        else:
+            print(f"   ⚠️ No data for sensor {sensor_id}")
+    
+    print("\n" + "=" * 60)
+    print(f"🎉 INGEST COMPLETE!")
+    print(f"   Total sensors: {len(SENSOR_IDS)}")
+    print(f"   Total records: {total_records}")
+    print(f"   Files created: {len(files_created)}")
+    print("=" * 60)
+    
+    return files_created
 
-    # Save combined data
-    combined_data = {
-        "meta": {**meta, "page": 1, "limit": len(all_results)},
-        "results": all_results
-    }
-    return combined_data
 
 if __name__ == "__main__":
-    # Default: fetch all available data (no date filter)
-    # Set DATETIME_FROM/DATETIME_TO env vars to filter by date range
-    datetime_from_str = os.getenv("DATETIME_FROM", "")
-    datetime_to_str = os.getenv("DATETIME_TO", "")
-
-    datetime_from = datetime.strptime(datetime_from_str, "%Y-%m-%d") if datetime_from_str else None
-    datetime_to = datetime.strptime(datetime_to_str, "%Y-%m-%d") if datetime_to_str else None
-
-    date_range_str = f"{datetime_from.date() if datetime_from else 'beginning'} to {datetime_to.date() if datetime_to else 'now'}"
-
-    print(f"Fetching PM2.5 data for sensor {SENSOR_ID}")
-    print(f"Date range: {date_range_str}")
-    print("-" * 50)
-
-    data = fetch_all_pages(SENSOR_ID, datetime_from=datetime_from, datetime_to=datetime_to)
-
-    if data.get("results"):
-        save_raw(data, SENSOR_ID, "all")
-        print(f"\nTotal records fetched: {len(data['results'])}")
-    else:
-        print("No data found for the specified date range")
+    main()

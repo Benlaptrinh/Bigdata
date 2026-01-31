@@ -1,7 +1,20 @@
+"""
+ETL Pipeline for PM2.5 Data
+- Read raw JSON files from multiple sensors
+- Normalize schema
+- Aggregate to hourly
+- Save to Parquet
+"""
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, to_date
+from pyspark.sql.functions import (
+    col, lit, to_timestamp, avg, hour, dayofweek, month,
+    when, isnan, isnull
+)
+import os
 
-# 1. Khởi tạo Spark
+# -----------------------
+# Spark Session
+# -----------------------
 spark = SparkSession.builder \
     .appName("PM25_ETL") \
     .master("local[*]") \
@@ -9,44 +22,136 @@ spark = SparkSession.builder \
     .config("spark.driver.bindAddress", "127.0.0.1") \
     .getOrCreate()
 
-# 2. Đường dẫn dữ liệu
-RAW_PATH = "data/raw/*.json"
-OUTPUT_PATH = "data/processed/pm25_clean"
+spark.sparkContext.setLogLevel("WARN")
 
-# 3. Đọc JSON
-df_raw = spark.read \
-    .option("multiLine", True) \
-    .json(RAW_PATH)
+# -----------------------
+# Paths
+# -----------------------
+RAW_DIR = "data/raw"
+OUTPUT_CLEAN = "data/processed/pm25_clean"
+OUTPUT_HOURLY = "data/processed/pm25_hourly"
 
-# 4. Flatten dữ liệu (results là array)
-df = df_raw.selectExpr("explode(results) as r")
+# -----------------------
+# Read all raw JSON files
+# -----------------------
+print("📂 Reading raw JSON files...")
 
-# 5. Chọn field cần thiết
-df_selected = df.select(
-    col("r.value").alias("pm25"),
-    col("r.period.datetimeTo.utc").alias("datetime"),
-    col("r.parameter.name").alias("parameter")
-)
+# Read all sensor_*.json files
+raw_files = [f for f in os.listdir(RAW_DIR) if f.startswith("sensor_") and f.endswith(".json")]
 
-# 6. Lọc dữ liệu PM2.5 hợp lệ
-df_clean = df_selected.filter(
+if not raw_files:
+    raise ValueError(f"No sensor files found in {RAW_DIR}")
+
+print(f"   Found {len(raw_files)} raw files")
+
+# Read and union all files
+dfs = []
+for f in raw_files:
+    filepath = os.path.join(RAW_DIR, f)
+    df_temp = spark.read.json(filepath)
+    dfs.append(df_temp)
+    
+df_raw = dfs[0]
+for df_other in dfs[1:]:
+    df_raw = df_raw.unionByName(df_other)
+
+print(f"   Total raw records: {df_raw.count()}")
+
+# -----------------------
+# Extract and normalize columns
+# -----------------------
+print("\n🔧 Normalizing schema...")
+
+# OpenAQ response structure varies, try different paths
+# Handle nested structure from our ingest script
+if "results" in df_raw.columns:
+    df_expanded = df_raw.selectExpr("explode(results) as r")
+    
+    df_normalized = df_expanded.select(
+        col("r.value").alias("pm25"),
+        to_timestamp(col("r.period.datetimeTo.utc")).alias("datetime"),
+        col("r.parameter.name").alias("parameter"),
+        col("r.period.label").alias("period_label"),
+        df_raw.sensor_id.alias("sensor_id") if "sensor_id" in df_raw.columns else lit("unknown").alias("sensor_id")
+    )
+else:
+    # Direct structure
+    df_normalized = df_raw.select(
+        col("value").alias("pm25"),
+        to_timestamp(col("period.datetimeTo.utc")).alias("datetime"),
+        col("parameter.name").alias("parameter"),
+        col("period.label").alias("period_label")
+    )
+
+# -----------------------
+# Filter valid PM2.5 data
+# -----------------------
+print("\n🧹 Filtering valid PM2.5 data...")
+
+df_clean = df_normalized.filter(
     (col("parameter") == "pm25") &
+    (col("pm25").isNotNull()) &
+    (~isnan(col("pm25"))) &
     (col("pm25") > 0) &
-    (col("pm25") != -999)
-)
-
-# 7. Chuẩn hóa ngày
-df_final = df_clean.withColumn(
-    "date",
-    to_date(col("datetime"))
+    (col("pm25") != -999) &
+    (col("datetime").isNotNull())
 ).select(
-    "date",
+    "sensor_id",
+    "datetime",
     "pm25"
 )
 
-# 8. Ghi ra Parquet
-df_final.write.mode("append").parquet(OUTPUT_PATH)
+print(f"   Clean records: {df_clean.count()}")
 
-print("ETL DONE. Output saved to:", OUTPUT_PATH)
+# Save clean data
+df_clean.write.mode("overwrite").parquet(OUTPUT_CLEAN)
+print(f"   ✅ Saved to: {OUTPUT_CLEAN}")
+
+# -----------------------
+# Hourly Aggregation (IMPORTANT: Increases row count!)
+# -----------------------
+print("\n⏰ Aggregating to hourly (this increases data size)...")
+
+df_hourly = df_clean.groupBy(
+    "sensor_id",
+    hour("datetime").alias("hour"),
+    dayofweek("datetime").alias("day_of_week"),
+    month("datetime").alias("month")
+).agg(
+    avg("pm25").alias("pm25"),
+    to_timestamp(
+        date_add(to_timestamp(col("datetime"), "yyyy-MM-dd"), 0) +
+        (hour("datetime") * 3600)
+    ).alias("datetime")
+)
+
+# Reorder columns
+df_hourly = df_hourly.select(
+    "sensor_id",
+    "datetime",
+    "hour",
+    "day_of_week",
+    "month",
+    "pm25"
+)
+
+df_hourly = df_hourly.orderBy("sensor_id", "datetime")
+
+print(f"   Hourly records: {df_hourly.count()}")
+
+# Save hourly data
+df_hourly.write.mode("overwrite").parquet(OUTPUT_HOURLY)
+print(f"   ✅ Saved to: {OUTPUT_HOURLY}")
+
+# -----------------------
+# Summary
+# -----------------------
+print("\n" + "=" * 60)
+print("📊 ETL SUMMARY")
+print("=" * 60)
+print(f"Raw files processed: {len(raw_files)}")
+print(f"Clean records: {df_clean.count()}")
+print(f"Hourly records: {df_hourly.count()}")
+print("=" * 60)
 
 spark.stop()
